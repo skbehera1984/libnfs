@@ -66,11 +66,11 @@ struct client {
        int is_finished;
 };
 
-int recursive = 0, summary = 0, discovery = 0;
+int recursive = 0, summary = 0;
 
 void print_usage(void)
 {
-	fprintf(stderr, "Usage: nfs-ls [-?|--help|--usage] [-R|--recursive] [-s|--summary] [-D|--discovery] <url>\n");
+	fprintf(stderr, "Usage: nfs-ls [-?|--help|--usage] [-R|--recursive] [-s|--summary] <url>\n");
 }
 
 int process_server(const char *server) {
@@ -187,8 +187,6 @@ int main(int argc, char *argv[])
 			recursive++;
 		} else if (!strcmp(argv[i], "-s") || !strcmp(argv[i], "--summary")) {
 			summary++;
-		} else if (!strcmp(argv[i], "-D") || !strcmp(argv[i], "--discovery")) {
-			discovery++;
 		} else{
 			goto finished;
 		}
@@ -198,39 +196,6 @@ int main(int argc, char *argv[])
 	if (nfs == NULL) {
 		printf("failed to init context\n");
 		goto finished;
-	}
-
-	if (discovery) {
-		url = nfs_parse_url_incomplete(nfs, argv[argc - 1]);
-		if (url == NULL) {
-			fprintf(stderr, "%s\n", nfs_get_error(nfs));
-			goto finished;
-		}
-		if (!url->server) {
-			struct nfs_server_list *srvrs;
-			struct nfs_server_list *srv;
-
-			srvrs = nfs_find_local_servers();
-			if (srvrs == NULL) {
-				fprintf(stderr, "Failed to find local servers.\n");
-				goto finished;
-			}
-			for (srv=srvrs; srv; srv = srv->next) {
-				if (recursive) {
-					process_server(srv->addr);
-				} else {
-					printf("nfs://%s\n", srv->addr);
-				}
-			}
-			free_nfs_srvr_list(srvrs);
-			ret = 0;
-			goto finished;
-		}
-		if (url->server && !url->path) {
-			ret = process_server(url->server);
-			goto finished;
-		}
-		nfs_destroy_url(url);
 	}
 
 	url = nfs_parse_url_dir(nfs, argv[argc - 1]);

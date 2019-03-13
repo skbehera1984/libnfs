@@ -79,7 +79,6 @@
 #include "libnfs.h"
 #include "libnfs-raw.h"
 #include "libnfs-raw-mount.h"
-#include "libnfs-raw-portmap.h"
 #include "libnfs-private.h"
 
 void
@@ -475,7 +474,7 @@ nfs_init_context(void)
 	nfs->dircache_enabled = 1;
 	/* Default is never give up, never surrender */
 	nfs->auto_reconnect = -1;
-	nfs->version = NFS_V3;
+	nfs->version = NFS_V4;
 
         /* NFSv4 parameters */
         /* We need a "random" initial verifier */
@@ -611,107 +610,6 @@ rpc_connect_program_4_cb(struct rpc_context *rpc, int status,
 }
 
 static void
-rpc_connect_program_3_cb(struct rpc_context *rpc, int status,
-                         void *command_data, void *private_data)
-{
-	struct rpc_cb_data *data = private_data;
-	struct pmap3_string_result *gar;
-	uint32_t rpc_port = 0;
-	char *ptr;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	if (status != RPC_STATUS_SUCCESS) {
-		data->cb(rpc, status, command_data, data->private_data);
-		free_rpc_cb_data(data);
-		return;
-	}
-
-	switch (rpc->s.ss_family) {
-	case AF_INET:
-		rpc_port = *(uint32_t *)(void *)command_data;
-		break;
-	case AF_INET6:
-		/* ouch. portmapper and ipv6 are not great */
-		gar = command_data;
-		if (gar->addr == NULL) {
-			break;
-		}
-		ptr = strrchr(gar->addr, '.');
-		if (ptr == NULL) {
-			break;
-		}
-		rpc_port = atoi(ptr + 1);
-		*ptr = 0;
-		ptr = strrchr(gar->addr, '.');
-		if (ptr == NULL) {
-			break;
-		}
-		rpc_port += 256 * atoi(ptr + 1);
-		break;
-	}
-	if (rpc_port == 0) {
-		rpc_set_error(rpc, "RPC error. Program is not available on %s",
-			      data->server);
-		data->cb(rpc, RPC_STATUS_ERROR, rpc_get_error(rpc),
-			 data->private_data);
-		free_rpc_cb_data(data);
-		return;
-	}
-
-	rpc_disconnect(rpc, "normal disconnect");
-        if (rpc_connect_port_internal(rpc, rpc_port, data)) {
-		data->cb(rpc, RPC_STATUS_ERROR, command_data,
-                         data->private_data);
-		free_rpc_cb_data(data);
-                return;
-        }
-}
-
-static void
-rpc_connect_program_2_cb(struct rpc_context *rpc, int status,
-                         void *command_data, void *private_data)
-{
-	struct rpc_cb_data *data = private_data;
-	struct pmap3_mapping map;
-
-	assert(rpc->magic == RPC_CONTEXT_MAGIC);
-
-	if (status != RPC_STATUS_SUCCESS) {
-		data->cb(rpc, status, command_data, data->private_data);
-		free_rpc_cb_data(data);
-		return;
-	}
-
-	switch (rpc->s.ss_family) {
-	case AF_INET:
-		if (rpc_pmap2_getport_async(rpc, data->program, data->version,
-                                            IPPROTO_TCP,
-                                            rpc_connect_program_3_cb,
-                                            private_data) != 0) {
-			data->cb(rpc, RPC_STATUS_ERROR, command_data, data->private_data);
-			free_rpc_cb_data(data);
-			return;
-		}
-		break;
-	case AF_INET6:
-		map.prog=data->program;
-		map.vers=data->version;
-		map.netid="";
-		map.addr="";
-		map.owner="";
-		if (rpc_pmap3_getaddr_async(rpc, &map,
-                                            rpc_connect_program_3_cb,
-                                            private_data) != 0) {
-			data->cb(rpc, RPC_STATUS_ERROR, command_data, data->private_data);
-			free_rpc_cb_data(data);
-			return;
-		}
-		break;
-	}
-}
-
-static void
 rpc_connect_program_1_cb(struct rpc_context *rpc, int status,
                          void *command_data, void *private_data)
 {
@@ -726,25 +624,6 @@ rpc_connect_program_1_cb(struct rpc_context *rpc, int status,
 		data->cb(rpc, status, command_data, data->private_data);
 		free_rpc_cb_data(data);
 		return;
-	}
-
-	switch (rpc->s.ss_family) {
-	case AF_INET:
-		if (rpc_pmap2_null_async(rpc, rpc_connect_program_2_cb,
-                                         data) != 0) {
-			data->cb(rpc, RPC_STATUS_ERROR, command_data, data->private_data);
-			free_rpc_cb_data(data);
-			return;
-		}
-		break;
-	case AF_INET6:
-		if (rpc_pmap3_null_async(rpc, rpc_connect_program_2_cb,
-                                         data) != 0) {
-			data->cb(rpc, RPC_STATUS_ERROR, command_data, data->private_data);
-			free_rpc_cb_data(data);
-			return;
-		}
-		break;
 	}
 }
 
@@ -854,8 +733,6 @@ nfs_mount_async(struct nfs_context *nfs, const char *server,
                 const char *export, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_mount_async(nfs, server, export, cb, private_data);
         case NFS_V4:
                 return nfs4_mount_async(nfs, server, export, cb, private_data);
         default:
@@ -872,8 +749,6 @@ int
 nfs_umount_async(struct nfs_context *nfs, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_umount_async(nfs, cb, private_data);
         case NFS_V4:
                 /* umount is a no-op in v4 */
                 (*cb)(0, nfs, NULL, private_data);
@@ -991,8 +866,6 @@ nfs_stat_async(struct nfs_context *nfs, const char *path,
                nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_stat_async(nfs, path, cb, private_data);
         default:
                 nfs_set_error(nfs, "%s does not support NFSv4",
                               __FUNCTION__);
@@ -1005,9 +878,6 @@ nfs_stat64_async(struct nfs_context *nfs, const char *path,
                  nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_stat64_async(nfs, path, 0,
-                                         cb, private_data);
         case NFS_V4:
                 return nfs4_stat64_async(nfs, path, 0,
                                          cb, private_data);
@@ -1023,9 +893,6 @@ nfs_lstat64_async(struct nfs_context *nfs, const char *path,
                   nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_stat64_async(nfs, path, 1,
-                                         cb, private_data);
         case NFS_V4:
                 return nfs4_stat64_async(nfs, path, 1,
                                          cb, private_data);
@@ -1041,9 +908,6 @@ nfs_open2_async(struct nfs_context *nfs, const char *path, int flags,
                 int mode, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_open_async(nfs, path, flags, mode,
-                                       cb, private_data);
         case NFS_V4:
                 return nfs4_open_async(nfs, path, flags, mode,
                                        cb, private_data);
@@ -1067,8 +931,6 @@ nfs_chdir_async(struct nfs_context *nfs, const char *path,
                 nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_chdir_async(nfs, path, cb, private_data);
         case NFS_V4:
                 return nfs4_chdir_async(nfs, path, cb, private_data);
         default:
@@ -1083,10 +945,6 @@ nfs_pread_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset,
                 uint64_t count, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_pread_async_internal(nfs, nfsfh, offset,
-                                                 (size_t)count,
-                                                 cb, private_data, 0);
         case NFS_V4:
                 return nfs4_pread_async_internal(nfs, nfsfh, offset,
                                                  (size_t)count,
@@ -1103,10 +961,6 @@ nfs_read_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t count,
                nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_pread_async_internal(nfs, nfsfh, nfsfh->offset,
-                                                 (size_t)count,
-                                                 cb, private_data, 1);
         case NFS_V4:
                 return nfs4_pread_async_internal(nfs, nfsfh, nfsfh->offset,
                                                  (size_t)count,
@@ -1123,10 +977,6 @@ nfs_pwrite_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t offset,
                  uint64_t count, const void *buf, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_pwrite_async_internal(nfs, nfsfh, offset,
-                                                  (size_t)count, buf,
-                                                  cb, private_data, 0);
         case NFS_V4:
                 return nfs4_pwrite_async_internal(nfs, nfsfh, offset,
                                                   (size_t)count, buf,
@@ -1143,9 +993,6 @@ nfs_write_async(struct nfs_context *nfs, struct nfsfh *nfsfh, uint64_t count,
                 const void *buf, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_write_async(nfs, nfsfh, count, buf,
-                                        cb, private_data);
         case NFS_V4:
                 return nfs4_write_async(nfs, nfsfh, count, buf,
                                         cb, private_data);
@@ -1161,8 +1008,6 @@ nfs_close_async(struct nfs_context *nfs, struct nfsfh *nfsfh, nfs_cb cb,
                 void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_close_async(nfs, nfsfh, cb, private_data);
         case NFS_V4:
                 return nfs4_close_async(nfs, nfsfh, cb, private_data);
         default:
@@ -1177,8 +1022,6 @@ nfs_fstat_async(struct nfs_context *nfs, struct nfsfh *nfsfh, nfs_cb cb,
                  void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_fstat_async(nfs, nfsfh, cb, private_data);
         default:
                 nfs_set_error(nfs, "%s does not support NFSv4",
                               __FUNCTION__);
@@ -1191,8 +1034,6 @@ nfs_fstat64_async(struct nfs_context *nfs, struct nfsfh *nfsfh, nfs_cb cb,
                    void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_fstat64_async(nfs, nfsfh, cb, private_data);
         case NFS_V4:
                 return nfs4_fstat64_async(nfs, nfsfh, cb, private_data);
         default:
@@ -1207,8 +1048,6 @@ nfs_fsync_async(struct nfs_context *nfs, struct nfsfh *nfsfh, nfs_cb cb,
                  void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_fsync_async(nfs, nfsfh, cb, private_data);
         case NFS_V4:
                 return nfs4_fsync_async(nfs, nfsfh, cb, private_data);
         default:
@@ -1223,9 +1062,6 @@ nfs_ftruncate_async(struct nfs_context *nfs, struct nfsfh *nfsfh,
                     uint64_t length, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_ftruncate_async(nfs, nfsfh, length,
-                                            cb, private_data);
         case NFS_V4:
                 return nfs4_ftruncate_async(nfs, nfsfh, length,
                                             cb, private_data);
@@ -1241,8 +1077,6 @@ nfs_truncate_async(struct nfs_context *nfs, const char *path, uint64_t length,
                    nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_truncate_async(nfs, path, length, cb, private_data);
         case NFS_V4:
                 return nfs4_truncate_async(nfs, path, length, cb, private_data);
         default:
@@ -1257,8 +1091,6 @@ nfs_mkdir2_async(struct nfs_context *nfs, const char *path, int mode,
                  nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_mkdir2_async(nfs, path, mode, cb, private_data);
         case NFS_V4:
                 return nfs4_mkdir2_async(nfs, path, mode, cb, private_data);
         default:
@@ -1280,8 +1112,6 @@ nfs_rmdir_async(struct nfs_context *nfs, const char *path, nfs_cb cb,
                  void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_rmdir_async(nfs, path, cb, private_data);
         case NFS_V4:
                 return nfs4_rmdir_async(nfs, path, cb, private_data);
         default:
@@ -1296,9 +1126,6 @@ nfs_create_async(struct nfs_context *nfs, const char *path, int flags,
                   int mode, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_create_async(nfs, path, flags, mode,
-                                         cb, private_data);
         case NFS_V4:
                 return nfs4_create_async(nfs, path, flags, mode,
                                          cb, private_data);
@@ -1321,8 +1148,6 @@ nfs_unlink_async(struct nfs_context *nfs, const char *path, nfs_cb cb,
                   void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_unlink_async(nfs, path, cb, private_data);
         case NFS_V4:
                 return nfs4_unlink_async(nfs, path, cb, private_data);
         default:
@@ -1337,8 +1162,6 @@ nfs_mknod_async(struct nfs_context *nfs, const char *path, int mode, int dev,
                  nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_mknod_async(nfs, path, mode, dev, cb, private_data);
         case NFS_V4:
                 return nfs4_mknod_async(nfs, path, mode, dev, cb, private_data);
         default:
@@ -1353,8 +1176,6 @@ nfs_opendir_async(struct nfs_context *nfs, const char *path, nfs_cb cb,
                    void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_opendir_async(nfs, path, cb, private_data);
         case NFS_V4:
                 return nfs4_opendir_async(nfs, path, cb, private_data);
         default:
@@ -1430,9 +1251,6 @@ nfs_lseek_async(struct nfs_context *nfs, struct nfsfh *nfsfh, int64_t offset,
                  int whence, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_lseek_async(nfs, nfsfh, offset, whence,
-                                        cb, private_data);
         case NFS_V4:
                 return nfs4_lseek_async(nfs, nfsfh, offset, whence,
                                         cb, private_data);
@@ -1480,8 +1298,6 @@ nfs_statvfs_async(struct nfs_context *nfs, const char *path, nfs_cb cb,
                    void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_statvfs_async(nfs, path, cb, private_data);
         case NFS_V4:
                 return nfs4_statvfs_async(nfs, path, cb, private_data);
         default:
@@ -1496,8 +1312,6 @@ nfs_statvfs64_async(struct nfs_context *nfs, const char *path, nfs_cb cb,
                     void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_statvfs64_async(nfs, path, cb, private_data);
         case NFS_V4:
                 return nfs4_statvfs64_async(nfs, path, cb, private_data);
         default:
@@ -1512,8 +1326,6 @@ nfs_readlink_async(struct nfs_context *nfs, const char *path, nfs_cb cb,
                     void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_readlink_async(nfs, path, cb, private_data);
         case NFS_V4:
                 return nfs4_readlink_async(nfs, path, cb, private_data);
         default:
@@ -1528,9 +1340,6 @@ nfs_chmod_async(struct nfs_context *nfs, const char *path, int mode,
                 nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_chmod_async_internal(nfs, path, 0, mode,
-                                                 cb, private_data);
         case NFS_V4:
                 return nfs4_chmod_async_internal(nfs, path, 0, mode,
                                                  cb, private_data);
@@ -1546,9 +1355,6 @@ nfs_lchmod_async(struct nfs_context *nfs, const char *path, int mode,
                  nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_chmod_async_internal(nfs, path, 1, mode,
-                                                 cb, private_data);
         case NFS_V4:
                 return nfs4_chmod_async_internal(nfs, path, 1, mode,
                                                  cb, private_data);
@@ -1564,8 +1370,6 @@ nfs_fchmod_async(struct nfs_context *nfs, struct nfsfh *nfsfh, int mode,
                   nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_fchmod_async(nfs, nfsfh, mode, cb, private_data);
         case NFS_V4:
                 return nfs4_fchmod_async(nfs, nfsfh, mode, cb, private_data);
         default:
@@ -1580,9 +1384,6 @@ nfs_chown_async(struct nfs_context *nfs, const char *path, int uid, int gid,
                 nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_chown_async_internal(nfs, path, 0, uid, gid,
-                                                 cb, private_data);
         case NFS_V4:
                 return nfs4_chown_async_internal(nfs, path, 0, uid, gid,
                                                  cb, private_data);
@@ -1598,9 +1399,6 @@ nfs_lchown_async(struct nfs_context *nfs, const char *path, int uid, int gid,
                  nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_chown_async_internal(nfs, path, 1, uid, gid,
-                                                 cb, private_data);
         case NFS_V4:
                 return nfs4_chown_async_internal(nfs, path, 1, uid, gid,
                                                  cb, private_data);
@@ -1616,9 +1414,6 @@ nfs_fchown_async(struct nfs_context *nfs, struct nfsfh *nfsfh, int uid,
                  int gid, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_fchown_async(nfs, nfsfh, uid, gid,
-                                         cb, private_data);
         case NFS_V4:
                 return nfs4_fchown_async(nfs, nfsfh, uid, gid,
                                          cb, private_data);
@@ -1634,9 +1429,6 @@ nfs_utimes_async(struct nfs_context *nfs, const char *path,
                  struct timeval *times, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_utimes_async_internal(nfs, path, 0, times,
-                                                  cb, private_data);
         case NFS_V4:
                 return nfs4_utimes_async_internal(nfs, path, 0, times,
                                                   cb, private_data);
@@ -1652,9 +1444,6 @@ nfs_lutimes_async(struct nfs_context *nfs, const char *path,
                   struct timeval *times, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_utimes_async_internal(nfs, path, 1, times,
-                                                  cb, private_data);
         case NFS_V4:
                 return nfs4_utimes_async_internal(nfs, path, 1, times,
                                                   cb, private_data);
@@ -1670,8 +1459,6 @@ nfs_utime_async(struct nfs_context *nfs, const char *path,
                 struct utimbuf *times, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_utime_async(nfs, path, times, cb, private_data);
         case NFS_V4:
                 return nfs4_utime_async(nfs, path, times, cb, private_data);
         default:
@@ -1686,8 +1473,6 @@ nfs_access_async(struct nfs_context *nfs, const char *path, int mode,
                  nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_access_async(nfs, path, mode, cb, private_data);
         case NFS_V4:
                 return nfs4_access_async(nfs, path, mode, cb, private_data);
         default:
@@ -1702,8 +1487,6 @@ nfs_access2_async(struct nfs_context *nfs, const char *path, nfs_cb cb,
                    void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_access2_async(nfs, path, cb, private_data);
         case NFS_V4:
                 return nfs4_access2_async(nfs, path, cb, private_data);
         default:
@@ -1718,9 +1501,6 @@ nfs_symlink_async(struct nfs_context *nfs, const char *target,
                    const char *newpath, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_symlink_async(nfs, target, newpath,
-                                          cb, private_data);
         case NFS_V4:
                 return nfs4_symlink_async(nfs, target, newpath,
                                           cb, private_data);
@@ -1736,9 +1516,6 @@ nfs_rename_async(struct nfs_context *nfs, const char *oldpath,
                   const char *newpath, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_rename_async(nfs, oldpath, newpath,
-                                         cb, private_data);
         case NFS_V4:
                 return nfs4_rename_async(nfs, oldpath, newpath,
                                          cb, private_data);
@@ -1754,9 +1531,6 @@ nfs_link_async(struct nfs_context *nfs, const char *oldpath,
                const char *newpath, nfs_cb cb, void *private_data)
 {
 	switch (nfs->version) {
-        case NFS_V3:
-                return nfs3_link_async(nfs, oldpath, newpath,
-                                       cb, private_data);
         case NFS_V4:
                 return nfs4_link_async(nfs, oldpath, newpath,
                                        cb, private_data);
@@ -1833,7 +1607,6 @@ nfs_set_autoreconnect(struct nfs_context *nfs, int num_retries) {
 int
 nfs_set_version(struct nfs_context *nfs, int version) {
 	switch (version) {
-	case NFS_V3:
 	case NFS_V4:
 		nfs->version = version;
 		break;

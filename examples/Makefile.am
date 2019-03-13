@@ -1,4 +1,4 @@
-noinst_PROGRAMS = nfsclient-async nfsclient-raw nfsclient-sync nfsclient-bcast nfsclient-listservers nfs-fh nfs-io nfs-ln nfs4-cat portmap-client portmap-server
+noinst_PROGRAMS = nfsclient-async nfsclient-sync nfs-io nfs-ln nfs4-cat portmap-client portmap-server
 
 if HAVE_TALLOC_TEVENT
 noinst_PROGRAMS += nfs4-cat-talloc

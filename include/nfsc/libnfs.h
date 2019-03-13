@@ -1911,22 +1911,6 @@ struct nfs_server_list {
 };
 
 /*
- * Sync find_local_servers(<server>)
- * This function will probe all local networks for NFS server.
- * This function will block for one second while awaiting for all nfs servers
- * to respond.
- *
- * Function returns
- * NULL : something failed
- *
- * struct nfs_server_list : a linked list of all discovered servers
- *
- * returned data must be freed by nfs_free_srvr_list(srv);
- */
-struct nfs_server_list *nfs_find_local_servers(void);
-void free_nfs_srvr_list(struct nfs_server_list *srv);
-
-/*
  * sync nfs_set_timeout()
  * This function sets the timeout used for nfs rpc calls.
  *
