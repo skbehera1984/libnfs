@@ -62,11 +62,7 @@ if(ENABLE_UTILS)
 endif()
 
 add_subdirectory(mount)
-add_subdirectory(nfs)
 add_subdirectory(nfs4)
-add_subdirectory(nlm)
-add_subdirectory(nsm)
-add_subdirectory(portmap)
 add_subdirectory(rquota)
 add_subdirectory(lib)
 
