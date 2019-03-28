@@ -69,6 +69,9 @@ add_subdirectory(nsm)
 add_subdirectory(portmap)
 add_subdirectory(rquota)
 add_subdirectory(lib)
+add_subdirectory(examples)
+add_subdirectory(tests)
+add_subdirectory(utils)
 
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/libnfs-config-version.cmake

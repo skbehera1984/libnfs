@@ -383,8 +383,8 @@ int main(int argc _U_, char *argv[] _U_)
 	int unset2prog, unset2vers, unset2prot, unset2port;
 	int set3prog, set3vers;
 	char *set3netid, *set3addr, *set3owner;
-	int unset3prog, unset3vers;
-	char *unset3netid, *unset3addr, *unset3owner;
+	int unset3prog = 0, unset3vers = 0;
+	char *unset3netid = NULL, *unset3addr = NULL, *unset3owner = NULL;
 	int getaddr3prog, getaddr3vers;
 	char *getaddr3netid, *getaddr3addr, *getaddr3owner;
 	char *u2t3string;

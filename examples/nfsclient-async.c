@@ -274,6 +274,8 @@ int main(int argc _U_, char *argv[] _U_)
 			pfds[1].events = rpc_which_events(mount_context);
 			num_fds = 2;
 		}
+        num_fds = num_fds;
+
 		if (poll(&pfds[0], 2, -1) < 0) {
 			printf("Poll failed");
 			exit(10);
